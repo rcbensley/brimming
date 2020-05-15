@@ -2,7 +2,7 @@ With this, your MariaDB database will be brimming with data.
 
     ./brimming 10000 20 100
 
-A table is created per-thread, so 10,000 rows and 20 threads is 20 tables with 500 rows in each table. A batch size of 100 means 100 rows will be inserted at a time. Currently, each row is unique.
+A table is created per-thread, so 10,000 rows and 20 threads is 20 tables with 500 rows in each table. A batch size of 100 means 100 rows will be inserted at a time.
 
 Each row is just over 1KB excluding the index (a bigint primary key, and a secondary index on a random int).
 The goal of brimming is to load up to 1TB of data at per-run. Runtime will vary greatly depeninding your hardware and resource allocation in 'my.cnf'
