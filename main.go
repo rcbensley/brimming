@@ -99,8 +99,8 @@ func (b *brim) load(table string) {
 
 	for i := b.batchSize; i <= b.rowsPerTable; i = i + b.batchSize {
 		batch := make([]string, b.batchSize)
+		r := genRow()
 		for a := range batch {
-			r := genRow()
 			batch[a] = r
 		}
 		joinedBatch := strings.Join(batch, ",")
