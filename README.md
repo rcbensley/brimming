@@ -9,9 +9,8 @@ A table is created per-thread, so 10,000 rows and 20 threads is 20 tables with 5
     go get github.com/rcbensley/brimming
 
 ## Options
-
-* Stick to whole, even numbers.
-* All DML and DDL statements have sql_log_bin disabled, so none of what brimming creates is in the binlog.
+Stick to whole, even numbers for everything.
+All DML and DDL statements have sql_log_bin disabled, so none of what brimming creates is in the binlog.
 
     ./brimming [rows] [threads] [batch_size] [/path/to/maridb.sock]
 
