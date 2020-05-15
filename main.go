@@ -15,11 +15,6 @@ import (
 
 var sessionSQL string = "SET SESSION sql_log_bin=0"
 
-type table struct {
-	name string
-	rows int
-}
-
 type brim struct {
 	db            *sql.DB
 	rowCountTotal int
@@ -28,7 +23,7 @@ type brim struct {
 	tableCount    int
 	databaseName  string
 	tableBaseName string
-	tableNames    []table
+	tableNames    []string
 	threads       int
 }
 
@@ -83,7 +78,7 @@ func (b *brim) createTable(name string) error {
 
 func (b *brim) createTables() error {
 	for i := range b.tableNames {
-		err := b.createTable(b.tableNames[i].name)
+		err := b.createTable(b.tableNames[i])
 		if err != nil {
 			return err
 		}
@@ -114,18 +109,11 @@ func (b *brim) load(table string) {
 		if err != nil {
 			log.Fatal(err)
 		}
-
-		// if (i + batchSize) >= b.rowsPerTable {
-		// 	batchSize = b.rowsPerTable - i
-		// }
-
-		// i = i + batchSize
-		// fmt.Printf("i is %d rows are %d batch is %d\n", i, b.rowsPerTable, batchSize)
 	}
 }
 
 func main() {
-	var rowsTotal int = 1000000000
+	var rowsTotal int = 1000000000000
 	var threads int = 20
 	var batchSize int = 1000
 	var err error
@@ -137,9 +125,9 @@ func main() {
 		if err != nil {
 			log.Fatal(err)
 		}
-		if rowsTotal > 1000000000 {
+		if rowsTotal > 1000000000000 {
 			log.Println("Max of 1,000,000,000 rows.")
-			rowsTotal = 1000000000
+			rowsTotal = 1000000000000
 		}
 		if rowsTotal <= 1 {
 			rowsTotal = 1
@@ -190,10 +178,9 @@ func main() {
 	b.rowsPerTable = b.rowCountTotal / b.threads
 	b.tableCount = b.threads
 
-	tableNames := make([]table, b.threads)
+	tableNames := make([]string, b.threads)
 	for i := 0; i <= b.tableCount-1; i++ {
-		t := table{name: fmt.Sprintf("%s%d", b.tableBaseName, i), rows: b.rowsPerTable}
-		tableNames[i] = t
+		tableNames[i] = fmt.Sprintf("%s%d", b.tableBaseName, i)
 	}
 	b.tableNames = tableNames
 
@@ -230,7 +217,7 @@ func main() {
 	}
 
 	for j := 0; j <= jobCount-1; j++ {
-		jobs <- b.tableNames[j].name
+		jobs <- b.tableNames[j]
 	}
 	close(jobs)
 
@@ -241,7 +228,7 @@ func main() {
 
 func (b *brim) loadTable(id int, jobs <-chan string, results chan<- string) {
 	for t := range jobs {
-		log.Printf("Worker %d loading %s with %d rows\n", id, t, b.rowsPerTable)
+		log.Printf("Worker %d is loading %s with %d rows\n", id, t, b.rowsPerTable)
 		b.load(t)
 		results <- t
 	}
