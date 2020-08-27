@@ -118,6 +118,7 @@ func main() {
 	var batchSize int = 1000
 	var err error
 	var socket string = "/var/lib/mysql/mysql.sock"
+	var user string = "root"
 
 	// With an limit of 1b rows, and a max of 100 tables, the largest table can be 10m rows.
 	if len(os.Args) >= 2 {
@@ -165,7 +166,11 @@ func main() {
 	if len(os.Args) >= 5 {
 		socket = os.Args[4]
 	}
-	dsn := fmt.Sprintf("root@unix(%s)/?multiStatements=true&autocommit=true", socket)
+
+	if len(os.Args) >= 6 {
+		user = os.Args[5]
+	}
+	dsn := fmt.Sprintf("%s@unix(%s)/?multiStatements=true&autocommit=true", user, socket)
 
 	b := brim{
 		rowCountTotal: rowsTotal,
