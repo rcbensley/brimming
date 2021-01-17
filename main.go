@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"log"
 	"math/rand"
-	"os"
 	"strings"
 	"time"
 
@@ -38,7 +37,7 @@ type brim struct {
 	threads       int
 }
 
-func randString(length int) string {
+func randomString(length int) string {
 	var characters = []rune("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789")
 
 	s := make([]rune, length)
@@ -48,14 +47,14 @@ func randString(length int) string {
 	return string(s)
 }
 
-func genRow() string {
+func generateRow() string {
 	// 1000000000 x genRow ~= 1TB
 	rand.Seed(time.Now().UnixNano())
 	b := rand.Intn(2147483647)
-	c := randString(255)
-	d := randString(255)
-	e := randString(255)
-	f := randString(255)
+	c := randomString(255)
+	d := randomString(255)
+	e := randomString(255)
+	f := randomString(255)
 	return fmt.Sprintf("(%d,'%s','%s','%s','%s')", b, c, d, e, f)
 }
 
@@ -110,7 +109,7 @@ func (b *brim) load(table string) {
 
 	for i := b.batchSize; i <= b.rowsPerTable; i = i + b.batchSize {
 		batch := make([]string, b.batchSize)
-		r := genRow()
+		r := generateRow()
 		for a := range batch {
 			batch[a] = r
 		}
@@ -122,6 +121,50 @@ func (b *brim) load(table string) {
 		}
 	}
 }
+
+
+func databaseSetup(dsn string) (*sql.DB, error) {
+	db, err := sql.Open("mysql", dsn)
+	if err != nil {
+		log.Fatal(err)
+	}
+	if err = db.Ping(); err != nil {
+		log.Fatal(err)
+	}
+	defer db.Close()
+
+	return db, nil
+}
+
+
+func (b *brim) run() {
+	log.Printf("Starting load of %d rows into %d table(s) with %d rows each,\n", b.rowCountTotal, len(b.tableNames), b.rowsPerTable)
+	log.Printf("Batch size is %d, with %d max rows per-table.\n", b.batchSize, b.rowsPerTable)
+
+	jobCount := len(b.tableNames)
+	jobs := make(chan string, jobCount)
+	jobResults := make(chan string, jobCount)
+
+	for worker := 1; worker <= b.threads; worker++ {
+		go func(id int, jobs <-chan string, results chan<- string) {
+			for t := range jobs {
+				log.Printf("Worker %d is loading %s with %d rows\n", id, t, b.rowsPerTable)
+				b.load(t)
+				results <- t
+			}
+		}(worker, jobs, jobResults)
+	}
+
+	for j := 0; j <= jobCount-1; j++ {
+		jobs <- b.tableNames[j]
+	}
+	close(jobs)
+
+	for r := 0; r <= jobCount-1; r++ {
+		<-jobResults
+	}
+}
+
 
 func init() {
 	// With an limit of 1b rows, and a max of 100 tables, the largest table can be 10m rows.
@@ -150,8 +193,7 @@ func init() {
 
 func main() {
 	var err error
-
-	dsn := fmt.Sprintf("%s@unix(%s)/?multiStatements=true&autocommit=true", user, socket)
+	dsn := fmt.Sprintf("%s@unix(%s)/?multiStatements=true&autocommit=true", *user, *socket)
 
 	b := brim{
 		rowCountTotal: *rowsTotal,
@@ -170,16 +212,10 @@ func main() {
 	}
 	b.tableNames = tableNames
 
-	db, err := sql.Open("mysql", dsn)
+	b.db, err = databaseSetup(dsn)
 	if err != nil {
 		log.Fatal(err)
 	}
-	if err = db.Ping(); err != nil {
-		log.Fatal(err)
-	}
-	defer db.Close()
-
-	b.db = db
 
 	err = b.createDatabase()
 	if err != nil {
@@ -191,31 +227,6 @@ func main() {
 		log.Fatal(err)
 	}
 
-	log.Printf("Starting load of %d rows over %d table(s) with %d rows each,\n", b.rowCountTotal, len(b.tableNames), b.rowsPerTable)
-	log.Printf("Batch size is %d, with %d max rows per-table.\n", b.batchSize, b.rowsPerTable)
 
-	jobCount := len(b.tableNames)
-	jobs := make(chan string, jobCount)
-	jobResults := make(chan string, jobCount)
-
-	for worker := 1; worker <= b.threads; worker++ {
-		go b.loadTable(worker, jobs, jobResults)
-	}
-
-	for j := 0; j <= jobCount-1; j++ {
-		jobs <- b.tableNames[j]
-	}
-	close(jobs)
-
-	for r := 0; r <= jobCount-1; r++ {
-		<-jobResults
-	}
 }
 
-func (b *brim) loadTable(id int, jobs <-chan string, results chan<- string) {
-	for t := range jobs {
-		log.Printf("Worker %d is loading %s with %d rows\n", id, t, b.rowsPerTable)
-		b.load(t)
-		results <- t
-	}
-}
