@@ -13,17 +13,17 @@ import (
 )
 
 var (
-	sessionSQL string = "SET SESSION sql_log_bin=0"
-	socket            = flag.String("socket", "/var/lib/mysql/mysql.sock", "Path to socket file")
-	host              = flag.String("host", "", "MariaDB hostname or IP address")
-	port              = flag.Int("port", 3306, "MariaDB server port")
-	user              = flag.String("user", "root", "MariaDB server user")
-	password          = flag.String("password", "", "MariaDB server password")
-	batchSize         = flag.Int("batch", 1000, "Number of rows to insert per-batch")
-	threads           = flag.Int("theads", 100, "Number of concurrent threads to insert row batches")
-	rowsTotal         = flag.Int("rows", 1000000000000, "Total number of rows to be inserted. Max of 1,000,000,000 rows.")
-	tables            = flag.Int("tables", 1, "Number of tables to distribute inserts between")
-	database          = flag.String("database", "brim", "Database schema")
+	sessionSQL = "SET SESSION sql_log_bin=0"
+	socket     = flag.String("socket", "/var/lib/mysql/mysql.sock", "Path to socket file")
+	host       = flag.String("host", "", "MariaDB hostname or IP address")
+	port       = flag.Int("port", 3306, "MariaDB server port")
+	user       = flag.String("user", "root", "MariaDB server user")
+	password   = flag.String("password", "", "MariaDB server password")
+	batchSize  = flag.Int("batch", 1000, "Number of rows to insert per-batch")
+	threads    = flag.Int("theads", 100, "Number of concurrent threads to insert row batches")
+	rows       = flag.Int("rows", 0, "Total number of rows to be inserted. Each row is 1 Kilobyte")
+	tables     = flag.Int("tables", 1, "Number of tables to distribute inserts between")
+	database   = flag.String("database", "brim", "Database schema")
 )
 
 type brim struct {
@@ -62,7 +62,7 @@ func generateRow() string {
 func (b *brim) createDatabase() error {
 	log.Printf("Creating database %s\n", b.database)
 	create := fmt.Sprintf("CREATE DATABASE IF NOT EXISTS %s", b.database)
-	err := b.exec(create)
+	err := b.insertRow(create)
 	if err != nil {
 		return err
 	}
@@ -80,7 +80,7 @@ func (b *brim) createTable(name string) error {
 	f char(255) NOT NULL,
 	PRIMARY KEY (a),
 	INDEX (b)) ENGINE=InnoDB;`, b.database, name)
-	err := b.exec(create)
+	err := b.insertRow(create)
 	if err != nil {
 		return err
 	}
@@ -97,7 +97,7 @@ func (b *brim) createTables() error {
 	return nil
 }
 
-func (b *brim) exec(query string) error {
+func (b *brim) insertRow(query string) error {
 	q := fmt.Sprintf("%s; %s;", sessionSQL, query)
 	_, err := b.db.Exec(q)
 	if err != nil {
@@ -106,7 +106,8 @@ func (b *brim) exec(query string) error {
 	return nil
 }
 
-func (b *brim) load(table string) {
+// Load table will generate a batch of data using generateRow and load the target table.
+func (b *brim) loadTable(table string) {
 
 	for i := b.batchSize; i <= b.rowsPerTable; i = i + b.batchSize {
 		batch := make([]string, b.batchSize)
@@ -116,7 +117,7 @@ func (b *brim) load(table string) {
 		}
 		joinedBatch := strings.Join(batch, ",")
 		row := fmt.Sprintf("INSERT INTO %s.%s (b,c,d,e,f) VALUES %s", b.database, table, joinedBatch)
-		err := b.exec(row)
+		err := b.insertRow(row)
 		if err != nil {
 			log.Fatal(err)
 		}
@@ -148,7 +149,7 @@ func (b *brim) run() {
 		go func(id int, jobs <-chan string, results chan<- string) {
 			for t := range jobs {
 				log.Printf("Worker %d is loading %s with %d rows\n", id, t, b.rowsPerTable)
-				b.load(t)
+				b.loadTable(t)
 				results <- t
 			}
 		}(worker, jobs, jobResults)
@@ -165,37 +166,34 @@ func (b *brim) run() {
 }
 
 func init() {
-	// With an limit of 1b rows, and a max of 100 tables, the largest table can be 10m rows.
-	if *rowsTotal > 1000000000000 {
-		*rowsTotal = 1000000000000
-	}
-	if *rowsTotal <= 1 {
-		*rowsTotal = 1
+	if *rows <= 0 {
+		log.Fatalln("Specify at least 1 row to be inserted ...")
 	}
 
-	if *threads > 100 {
-		*threads = 100
-	}
-	if *threads <= 1 {
-		*threads = 1
+	if *threads <= 0 {
+		log.Fatalln("Specify at least 1 thread ...")
 	}
 
-	if *batchSize > *rowsTotal {
-		log.Printf("Batch size cannot be larger than the total rows, using row limit of %d.", rowsTotal)
-		*batchSize = *rowsTotal
+	if *batchSize > *rows {
+		log.Fatalln("Batch size cannot be larger than the total rows ...")
 	}
+
 	if *batchSize <= 1 {
-		*batchSize = 1
+		log.Fatalln("Batch size needs to be greater than 1 ...")
+	}
+
+	if *tables <= 0 {
+		log.Fatalln("At least 1 table needs to be specified, so the data can go somewhere ...")
 	}
 }
 
 func main() {
 	var (
 		err         error
-		dsnUSer     = user
+		dsnUser     = user
 		dnsProtocol = "unix"
 		dnsAddress  = socket
-		dnsOptions  = "?multiStatements=true&autocommit=true"
+		dnsOptions  = "?multiStatements=true&autocommit=true&maxAllowedPacket=0"
 	)
 
 	if *host != "" {
@@ -204,13 +202,13 @@ func main() {
 	}
 
 	if *password != "" {
-		*dsnUSer = fmt.Sprintf("%s:%s", *user, *password)
+		*dsnUser = fmt.Sprintf("%s:%s", *user, *password)
 	}
 
-	dsn := fmt.Sprintf("%s@%s(%s)/%s", *dsnUSer, dnsProtocol, *dnsAddress, dnsOptions)
+	dsn := fmt.Sprintf("%s@%s(%s)/%s", *dsnUser, dnsProtocol, *dnsAddress, dnsOptions)
 
 	b := brim{
-		rowCountTotal: *rowsTotal,
+		rowCountTotal: *rows,
 		database:      *database,
 		tableBaseName: "brim",
 		threads:       *threads,
