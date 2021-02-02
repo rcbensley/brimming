@@ -13,17 +13,21 @@ import (
 )
 
 var (
+	minBatch = 2
+	minThreads = 2
+	minRows = 1000
+	minTables = 1
 	sessionSQL = "SET SESSION sql_log_bin=0"
 	socket     = flag.String("socket", "/var/lib/mysql/mysql.sock", "Path to socket file")
 	host       = flag.String("host", "", "MariaDB hostname or IP address")
 	port       = flag.Int("port", 3306, "MariaDB server port")
 	user       = flag.String("user", "root", "MariaDB server user")
 	password   = flag.String("password", "", "MariaDB server password")
-	batchSize  = flag.Int("batch", 1000, "Number of rows to insert per-batch")
-	threads    = flag.Int("theads", 100, "Number of concurrent threads to insert row batches")
-	rows       = flag.Int("rows", 0, "Total number of rows to be inserted. Each row is 1 Kilobyte")
-	tables     = flag.Int("tables", 1, "Number of tables to distribute inserts between")
-	database   = flag.String("database", "brim", "Database schema")
+	batchSize  = flag.Int("batch", 16000, "Number of rows to insert per-batch, 1 row is roughly 1KB. Pay attention to max_allowed_packet. Min=1000")
+	threads    = flag.Int("threads", 100, "Number of concurrent threads to insert row batches. Min=2")
+	rows       = flag.Int("rows", 100000, "Total number of rows to be inserted. Each row is roughly 1KB. Default is 100,000 rows (100MB). Min=1000")
+	tables     = flag.Int("tables", 1, "Number of tables to distribute inserts between. Min=1")
+	database   = flag.String("database", "brim", "Database schema, default is 'brim'")
 )
 
 type brim struct {
@@ -62,7 +66,7 @@ func generateRow() string {
 func (b *brim) createDatabase() error {
 	log.Printf("Creating database %s\n", b.database)
 	create := fmt.Sprintf("CREATE DATABASE IF NOT EXISTS %s", b.database)
-	err := b.insertRow(create)
+	err := b.exec(create)
 	if err != nil {
 		return err
 	}
@@ -80,7 +84,7 @@ func (b *brim) createTable(name string) error {
 	f char(255) NOT NULL,
 	PRIMARY KEY (a),
 	INDEX (b)) ENGINE=InnoDB;`, b.database, name)
-	err := b.insertRow(create)
+	err := b.exec(create)
 	if err != nil {
 		return err
 	}
@@ -97,7 +101,7 @@ func (b *brim) createTables() error {
 	return nil
 }
 
-func (b *brim) insertRow(query string) error {
+func (b *brim) exec(query string) error {
 	q := fmt.Sprintf("%s; %s;", sessionSQL, query)
 	_, err := b.db.Exec(q)
 	if err != nil {
@@ -117,7 +121,7 @@ func (b *brim) loadTable(table string) {
 		}
 		joinedBatch := strings.Join(batch, ",")
 		row := fmt.Sprintf("INSERT INTO %s.%s (b,c,d,e,f) VALUES %s", b.database, table, joinedBatch)
-		err := b.insertRow(row)
+		err := b.exec(row)
 		if err != nil {
 			log.Fatal(err)
 		}
@@ -166,46 +170,47 @@ func (b *brim) run() {
 }
 
 func init() {
-	if *rows <= 0 {
-		log.Fatalln("Specify at least 1 row to be inserted ...")
+	if *rows < minRows {
+		*rows = minRows
 	}
 
-	if *threads <= 0 {
-		log.Fatalln("Specify at least 1 thread ...")
+	if *threads < minThreads {
+		*threads = minThreads
 	}
 
-	if *batchSize > *rows {
-		log.Fatalln("Batch size cannot be larger than the total rows ...")
+	if *batchSize < minBatch{
+		*batchSize = minBatch
 	}
 
-	if *batchSize <= 1 {
-		log.Fatalln("Batch size needs to be greater than 1 ...")
+	if *tables < minTables {
+		*tables = minTables
 	}
 
-	if *tables <= 0 {
-		log.Fatalln("At least 1 table needs to be specified, so the data can go somewhere ...")
-	}
+	log.Printf(`Brimming is using %d thread(s)
+ to insert %d rows
+ into %d table(s),
+ with a batch size of %d per-thread.`, *threads, *rows, *tables, *batchSize)
 }
 
 func main() {
 	var (
 		err         error
 		dsnUser     = user
-		dnsProtocol = "unix"
-		dnsAddress  = socket
-		dnsOptions  = "?multiStatements=true&autocommit=true&maxAllowedPacket=0"
+		dsnProtocol = "unix"
+		dsnAddress  = socket
+		dsnOptions  = "?multiStatements=true&autocommit=true&maxAllowedPacket=0"
 	)
 
 	if *host != "" {
-		dnsProtocol = "tcp"
-		*dnsAddress = fmt.Sprintf("%s:%d", *host, *port)
+		dsnProtocol = "tcp"
+		*dsnAddress = fmt.Sprintf("%s:%d", *host, *port)
 	}
 
 	if *password != "" {
 		*dsnUser = fmt.Sprintf("%s:%s", *user, *password)
 	}
 
-	dsn := fmt.Sprintf("%s@%s(%s)/%s", *dsnUser, dnsProtocol, *dnsAddress, dnsOptions)
+	dsn := fmt.Sprintf("%s@%s(%s)/%s", *dsnUser, dsnProtocol, *dsnAddress, dsnOptions)
 
 	b := brim{
 		rowCountTotal: *rows,
