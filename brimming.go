@@ -148,9 +148,10 @@ func (b *brim) new() error {
 	jobs := [][]int{}
 	j := 1
 	k := b.tables
-	for i := b.rows; i >= 0; i = i - b.batch {
+	for i := b.rows - 1; i >= 0; i = i - b.batch {
 		if b.batch > i {
 			jobs = append(jobs, []int{j, i})
+			break
 		} else {
 			jobs = append(jobs, []int{j, b.batch})
 		}
