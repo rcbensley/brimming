@@ -175,7 +175,6 @@ func (b *brim) run() error {
 	}
 
 	log.Printf("Loading %d rows into %d table(s), batch size of %d, over %d jobs and %d threads\n", b.rows, b.tables, b.batch, len(b.jobs), b.threads)
-	log.Println(b.jobs)
 
 	jobCount := len(b.jobs)
 	jobs := make(chan int, jobCount)
