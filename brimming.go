@@ -148,15 +148,14 @@ func (b *brim) new() error {
 	jobs := [][]int{}
 	j := 1
 	k := b.tables
-	fmt.Printf("ROWS: %d\n", b.rows)
 	for i := b.rows; i >= 0; i = i - b.batch {
-		jobs = append(jobs, []int{j, b.batch})
+		if b.batch > i {
+			jobs = append(jobs, []int{j, i})
+		} else {
+			jobs = append(jobs, []int{j, b.batch})
+		}
 		if j >= k {
 			j = 1
-		}
-		if i-b.batch <= 0 {
-			jobs = append(jobs, []int{j, i})
-			break
 		}
 	}
 	b.jobs = jobs
@@ -175,7 +174,7 @@ func (b *brim) run() error {
 		return err
 	}
 
-	log.Printf("Starting load of %d rows into %d table(s) with a batch size of %d rows, over %d jobs and %d threads\n", b.rows, b.tables, b.batch, len(b.jobs), b.threads)
+	log.Printf("Loading %d rows into %d table(s), batch size of %d, over %d jobs and %d threads\n", b.rows, b.tables, b.batch, len(b.jobs), b.threads)
 	log.Println(b.jobs)
 
 	jobCount := len(b.jobs)
