@@ -36,13 +36,11 @@ type brim struct {
 	db            *sql.DB
 	database      string
 	rows          int
-	rowsPerTable  int
 	batch         int
 	tables        int
 	threads       int
 	jobs          [][]int
 	tableBaseName string
-	tableNames    []string
 }
 
 func randomString(length int) string {
@@ -150,6 +148,7 @@ func (b *brim) new() error {
 	jobs := [][]int{}
 	j := 1
 	k := b.tables
+	fmt.Printf("ROWS: %d\n", b.rows)
 	for i := b.rows; i >= 0; i = i - b.batch {
 		jobs = append(jobs, []int{j, b.batch})
 		if j >= k {
@@ -176,8 +175,8 @@ func (b *brim) run() error {
 		return err
 	}
 
-	log.Printf("Starting load of %d rows into %d table(s) with %d rows each,\n", b.rows, b.tables, b.rowsPerTable)
-	log.Printf("Batch size is %d, with %d max rows per-table over %d table(s).\n", b.batch, b.rowsPerTable, b.tables)
+	log.Printf("Starting load of %d rows into %d table(s) with a batch size of %d rows, over %d jobs and %d threads\n", b.rows, b.tables, b.batch, len(b.jobs), b.threads)
+	log.Println(b.jobs)
 
 	jobCount := len(b.jobs)
 	jobs := make(chan int, jobCount)
@@ -186,7 +185,6 @@ func (b *brim) run() error {
 	for worker := 1; worker <= b.threads; worker++ {
 		go func(id int, jobs <-chan int, results chan<- int) {
 			for i := range jobs {
-				log.Printf("Worker %d is loading %s%d with %d rows\n", id, b.tableBaseName, b.jobs[i][0], b.jobs[i][1])
 				b.loadTable(b.jobs[i][0], b.jobs[i][1])
 				results <- i
 			}
@@ -252,6 +250,7 @@ func init() {
 }
 
 func main() {
+	flag.Parse()
 	b := brim{
 		dsn:           fmt.Sprintf("%s@%s(%s)/%s", username, protocol, URI, dsnOptions),
 		rows:          *rowsFlag,
