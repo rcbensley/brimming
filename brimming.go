@@ -157,6 +157,9 @@ func (b *brim) new() error {
 		}
 		if j >= k {
 			j = 1
+		} else {
+
+			j++
 		}
 	}
 	b.jobs = jobs
