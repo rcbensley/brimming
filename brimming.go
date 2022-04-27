@@ -17,7 +17,6 @@ var (
 	username      string
 	protocol      string
 	URI           string
-	sessionSQL    string = "SET SESSION sql_log_bin=0"
 	dsnOptions    string = "?multiStatements=true&autocommit=true&maxAllowedPacket=0"
 	socketFlag           = flag.String("socket", "/tmp/mysql.sock", "Path to socket file")
 	hostFlag             = flag.String("host", "localhost", "MariaDB hostname or IP address")
@@ -77,13 +76,13 @@ func (b *brim) createDatabase() error {
 func (b *brim) createTable(name string) error {
 	log.Printf("Creating table %s.%s\n", b.database, name)
 	create := fmt.Sprintf(`CREATE TABLE IF NOT EXISTS %s.%s (
-	a bigint(20) NOT NULL AUTO_INCREMENT,
-	b int(11) NOT NULL,
-	c char(255) NOT NULL,
-	d char(255) NOT NULL,
-	e char(255) NOT NULL,
-	f char(255) NOT NULL,
-	PRIMARY KEY (a),
+a bigint(20) NOT NULL AUTO_INCREMENT,
+b int(11) NOT NULL,
+c char(255) NOT NULL,
+d char(255) NOT NULL,
+e char(255) NOT NULL,
+f char(255) NOT NULL,
+PRIMARY KEY (a),
 	INDEX (b)) ENGINE=InnoDB;`, b.database, name)
 	err := b.insertRow(create)
 	if err != nil {
@@ -103,8 +102,7 @@ func (b *brim) createTables() error {
 }
 
 func (b *brim) insertRow(query string) error {
-	q := fmt.Sprintf("%s; %s;", sessionSQL, query)
-	_, err := b.db.Exec(q)
+	_, err := b.db.Exec(query)
 	if err != nil {
 		return err
 	}
@@ -178,7 +176,7 @@ func (b *brim) run() error {
 		return err
 	}
 
-	log.Printf("Loading %d rows into %d table(s), batch size of %d, over %d jobs and %d threads\n", b.rows, b.tables, b.batch, len(b.jobs), b.threads)
+	log.Printf("Loading %d rows, into %d table(s), batch size of %d, over %d jobs and %d threads\n", b.rows, b.tables, b.batch, len(b.jobs), b.threads)
 
 	jobCount := len(b.jobs)
 	jobs := make(chan int, jobCount)
@@ -205,7 +203,9 @@ func (b *brim) run() error {
 	return nil
 }
 
-func init() {
+func main() {
+	flag.Parse()
+
 	if *userFlag == "" {
 		u, err := user.Current()
 		if err != nil {
@@ -249,10 +249,7 @@ func init() {
 	if *tablesFlag <= 0 {
 		log.Fatalln("At least 1 table needs to be specified, so the data can go somewhere ...")
 	}
-}
 
-func main() {
-	flag.Parse()
 	b := brim{
 		dsn:           fmt.Sprintf("%s@%s(%s)/%s", username, protocol, URI, dsnOptions),
 		rows:          *rowsFlag,
