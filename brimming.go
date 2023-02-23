@@ -7,6 +7,7 @@ import (
 	"log"
 	"math/rand"
 	"os/user"
+	"strconv"
 	"strings"
 	"time"
 
@@ -24,6 +25,8 @@ var (
 	userFlag             = flag.String("user", "", "MariaDB server user")
 	passwordFlag         = flag.String("password", "", "MariaDB server password")
 	databaseFlag         = flag.String("database", "brim", "Database schema")
+	engineFlag           = flag.String("engine", "InnoDB", "Table engine to use")
+	sizeFlag             = flag.String("size", "", "Total amount of data you wish to insert, this ignores the rows flag, example: 100MB instead of 100000 rows")
 	rowsFlag             = flag.Int("rows", 1000000, "Total number of rows to be inserted. Each row is around 1 Kilobyte")
 	batchSizeFlag        = flag.Int("batch", 1000, "Number of rows to insert per-batch")
 	tablesFlag           = flag.Int("tables", 1, "Number of tables to distribute inserts between")
@@ -40,6 +43,31 @@ type brim struct {
 	threads       int
 	jobs          [][]int
 	tableBaseName string
+	engine        string
+	infile        bool
+}
+
+func strToInt(s string) (int, error) {
+	ns := s[:len(s)-2]
+	n, err := strconv.Atoi(ns)
+	if err != nil {
+		return 0, err
+	}
+	return n, nil
+}
+
+func sizeToRows(s string) (int, error) {
+	id := strings.ToLower(s[len(s)-2:])
+	m := []string{"kb", "mb", "gb", "tb"}
+
+	for _, i := range m {
+		if id == i {
+			rows, err := strToInt(s)
+			return rows, err
+		}
+	}
+
+	return 0, fmt.Errorf("I don't know what to with %s", s)
 }
 
 func randomString(length int) string {
@@ -83,7 +111,7 @@ d char(255) NOT NULL,
 e char(255) NOT NULL,
 f char(255) NOT NULL,
 PRIMARY KEY (a),
-	INDEX (b)) ENGINE=InnoDB;`, b.database, name)
+	INDEX (b)) ENGINE=%s;`, b.database, name, b.engine)
 	err := b.insertRow(create)
 	if err != nil {
 		return err
@@ -230,10 +258,6 @@ func main() {
 		username = fmt.Sprintf("%s:%s", username, *passwordFlag)
 	}
 
-	if *rowsFlag <= 0 {
-		log.Fatalln("Specify at least 1 row to be inserted ...")
-	}
-
 	if *threadsFlag <= 0 {
 		log.Fatalln("Specify at least 1 thread ...")
 	}
@@ -252,12 +276,24 @@ func main() {
 
 	b := brim{
 		dsn:           fmt.Sprintf("%s@%s(%s)/%s", username, protocol, URI, dsnOptions),
-		rows:          *rowsFlag,
 		database:      *databaseFlag,
 		tableBaseName: "brim",
 		threads:       *threadsFlag,
 		batch:         *batchSizeFlag,
 		tables:        *tablesFlag,
+		engine:        *engineFlag,
+		infile:        *infileFlag,
+	}
+
+	if *sizeFlag != "" {
+		rows, err := sizeToRows(*sizeFlag)
+		if err != nil {
+			log.Fatalln(err.Error())
+		}
+		b.rows = rows
+	} else if *rowsFlag <= 0 {
+		log.Fatalln("Specify at least 1 row to be inserted ...")
+		b.rows = *rowsFlag
 	}
 
 	err := b.new()
