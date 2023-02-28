@@ -44,12 +44,11 @@ type brim struct {
 	jobs          [][]int
 	tableBaseName string
 	engine        string
-	infile        bool
 }
 
-func strToInt(s string) (int, error) {
+func sizeToFloat(s string) (float64, error) {
 	ns := s[:len(s)-2]
-	n, err := strconv.Atoi(ns)
+	n, err := strconv.ParseFloat(ns, 64)
 	if err != nil {
 		return 0, err
 	}
@@ -57,17 +56,28 @@ func strToInt(s string) (int, error) {
 }
 
 func sizeToRows(s string) (int, error) {
-	id := strings.ToLower(s[len(s)-2:])
-	m := []string{"kb", "mb", "gb", "tb"}
+	var m float64 = 1
+	size := strings.ToLower(s[len(s)-2:])
 
-	for _, i := range m {
-		if id == i {
-			rows, err := strToInt(s)
-			return rows, err
-		}
+	switch size {
+	case "mb":
+		m = 1000
+	case "gb":
+		m = 1000000
+	case "tb":
+		m = 1000000000
+	default:
+		return 0, fmt.Errorf("unknown size %s. I can do mb, gb, and tb", s)
 	}
 
-	return 0, fmt.Errorf("I don't know what to with %s", s)
+	rows, err := sizeToFloat(s)
+	if err != nil {
+		return int(rows), err
+	}
+
+	rows = rows * m
+
+	return int(rows), nil
 }
 
 func randomString(length int) string {
@@ -282,7 +292,6 @@ func main() {
 		batch:         *batchSizeFlag,
 		tables:        *tablesFlag,
 		engine:        *engineFlag,
-		infile:        *infileFlag,
 	}
 
 	if *sizeFlag != "" {
@@ -291,6 +300,8 @@ func main() {
 			log.Fatalln(err.Error())
 		}
 		b.rows = rows
+		log.Println(rows)
+		return
 	} else if *rowsFlag <= 0 {
 		log.Fatalln("Specify at least 1 row to be inserted ...")
 		b.rows = *rowsFlag
