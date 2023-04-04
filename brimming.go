@@ -7,9 +7,9 @@ import (
 	"log"
 	"math/rand"
 	"os/user"
+	"regexp"
 	"strconv"
 	"strings"
-	"time"
 
 	_ "github.com/go-sql-driver/mysql"
 )
@@ -57,6 +57,10 @@ func sizeToFloat(s string) (float64, error) {
 
 func sizeToRows(s string) (int, error) {
 	var m float64 = 1
+	re := regexp.MustCompile("(?i)[0-9]+[A-Za-z]+")
+	if !re.MatchString(s) {
+		return 0, fmt.Errorf("-size must be in format [number][size], e.g. 123gb")
+	}
 	size := strings.ToLower(s[len(s)-2:])
 
 	switch size {
@@ -67,7 +71,7 @@ func sizeToRows(s string) (int, error) {
 	case "tb":
 		m = 1000000000
 	default:
-		return 0, fmt.Errorf("unknown size %s. I can do mb, gb, and tb", s)
+		return 0, fmt.Errorf("unknown -size %s. I can do mb, gb, and tb", s)
 	}
 
 	rows, err := sizeToFloat(s)
@@ -80,24 +84,26 @@ func sizeToRows(s string) (int, error) {
 	return int(rows), nil
 }
 
-func randomString(length int) string {
+func randomString(r *rand.Rand) string {
+	var length int = 255
 	var characters = []rune("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789")
 
 	s := make([]rune, length)
 	for i := range s {
-		s[i] = characters[rand.Intn(len(characters))]
+		s[i] = characters[r.Intn(len(characters))]
 	}
 	return string(s)
 }
 
 func generateRow() string {
+	var limit = 2147483647
 	// 1000000000 x genRow ~= 1TB
-	rand.Seed(time.Now().UnixNano())
-	b := rand.Intn(2147483647)
-	c := randomString(255)
-	d := randomString(255)
-	e := randomString(255)
-	f := randomString(255)
+	r := rand.New(rand.NewSource(64))
+	b := r.Intn(limit)
+	c := randomString(r)
+	d := randomString(r)
+	e := randomString(r)
+	f := randomString(r)
 	return fmt.Sprintf("(%d,'%s','%s','%s','%s')", b, c, d, e, f)
 }
 
@@ -300,8 +306,6 @@ func main() {
 			log.Fatalln(err.Error())
 		}
 		b.rows = rows
-		log.Println(rows)
-		return
 	} else if *rowsFlag <= 0 {
 		log.Fatalln("Specify at least 1 row to be inserted ...")
 		b.rows = *rowsFlag
