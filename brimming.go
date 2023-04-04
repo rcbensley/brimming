@@ -7,8 +7,9 @@ import (
 	"log"
 	"math/rand"
 	"os/user"
+	"regexp"
+	"strconv"
 	"strings"
-	"time"
 
 	_ "github.com/go-sql-driver/mysql"
 )
@@ -24,6 +25,8 @@ var (
 	userFlag             = flag.String("user", "", "MariaDB server user")
 	passwordFlag         = flag.String("password", "", "MariaDB server password")
 	databaseFlag         = flag.String("database", "brim", "Database schema")
+	engineFlag           = flag.String("engine", "InnoDB", "Table engine to use")
+	sizeFlag             = flag.String("size", "", "Total amount of data you wish to insert, this ignores the rows flag, example: 100MB instead of 100000 rows")
 	rowsFlag             = flag.Int("rows", 1000000, "Total number of rows to be inserted. Each row is around 1 Kilobyte")
 	batchSizeFlag        = flag.Int("batch", 1000, "Number of rows to insert per-batch")
 	tablesFlag           = flag.Int("tables", 1, "Number of tables to distribute inserts between")
@@ -40,26 +43,67 @@ type brim struct {
 	threads       int
 	jobs          [][]int
 	tableBaseName string
+	engine        string
 }
 
-func randomString(length int) string {
+func sizeToFloat(s string) (float64, error) {
+	ns := s[:len(s)-2]
+	n, err := strconv.ParseFloat(ns, 64)
+	if err != nil {
+		return 0, err
+	}
+	return n, nil
+}
+
+func sizeToRows(s string) (int, error) {
+	var m float64 = 1
+	re := regexp.MustCompile("(?i)[0-9]+[A-Za-z]+")
+	if !re.MatchString(s) {
+		return 0, fmt.Errorf("-size must be in format [number][size], e.g. 123gb")
+	}
+	size := strings.ToLower(s[len(s)-2:])
+
+	switch size {
+	case "mb":
+		m = 1000
+	case "gb":
+		m = 1000000
+	case "tb":
+		m = 1000000000
+	default:
+		return 0, fmt.Errorf("unknown -size %s. I can do mb, gb, and tb", s)
+	}
+
+	rows, err := sizeToFloat(s)
+	if err != nil {
+		return int(rows), err
+	}
+
+	rows = rows * m
+
+	return int(rows), nil
+}
+
+func randomString(r *rand.Rand) string {
+	var length int = 255
 	var characters = []rune("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789")
 
 	s := make([]rune, length)
 	for i := range s {
-		s[i] = characters[rand.Intn(len(characters))]
+		s[i] = characters[r.Intn(len(characters))]
 	}
 	return string(s)
 }
 
 func generateRow() string {
+	var limit = 2147483647
 	// 1000000000 x genRow ~= 1TB
-	rand.Seed(time.Now().UnixNano())
-	b := rand.Intn(2147483647)
-	c := randomString(255)
-	d := randomString(255)
-	e := randomString(255)
-	f := randomString(255)
+	r := rand.New(rand.NewSource(64))
+	b := r.Intn(limit)
+	c := randomString(r)
+	d := randomString(r)
+	e := randomString(r)
+	f := randomString(r)
 	return fmt.Sprintf("(%d,'%s','%s','%s','%s')", b, c, d, e, f)
 }
 
@@ -83,7 +127,7 @@ d char(255) NOT NULL,
 e char(255) NOT NULL,
 f char(255) NOT NULL,
 PRIMARY KEY (a),
-	INDEX (b)) ENGINE=InnoDB;`, b.database, name)
+	INDEX (b)) ENGINE=%s;`, b.database, name, b.engine)
 	err := b.insertRow(create)
 	if err != nil {
 		return err
@@ -230,10 +274,6 @@ func main() {
 		username = fmt.Sprintf("%s:%s", username, *passwordFlag)
 	}
 
-	if *rowsFlag <= 0 {
-		log.Fatalln("Specify at least 1 row to be inserted ...")
-	}
-
 	if *threadsFlag <= 0 {
 		log.Fatalln("Specify at least 1 thread ...")
 	}
@@ -252,12 +292,23 @@ func main() {
 
 	b := brim{
 		dsn:           fmt.Sprintf("%s@%s(%s)/%s", username, protocol, URI, dsnOptions),
-		rows:          *rowsFlag,
 		database:      *databaseFlag,
 		tableBaseName: "brim",
 		threads:       *threadsFlag,
 		batch:         *batchSizeFlag,
 		tables:        *tablesFlag,
+		engine:        *engineFlag,
+	}
+
+	if *sizeFlag != "" {
+		rows, err := sizeToRows(*sizeFlag)
+		if err != nil {
+			log.Fatalln(err.Error())
+		}
+		b.rows = rows
+	} else if *rowsFlag <= 0 {
+		log.Fatalln("Specify at least 1 row to be inserted ...")
+		b.rows = *rowsFlag
 	}
 
 	err := b.new()
