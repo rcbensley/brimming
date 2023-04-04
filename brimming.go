@@ -11,26 +11,44 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/alecthomas/kingpin"
 	_ "github.com/go-sql-driver/mysql"
 )
 
 var (
-	username      string
-	protocol      string
-	URI           string
-	dsnOptions    string = "?multiStatements=true&autocommit=true&maxAllowedPacket=0"
-	socketFlag           = flag.String("socket", "/tmp/mysql.sock", "Path to socket file")
-	hostFlag             = flag.String("host", "localhost", "MariaDB hostname or IP address")
-	portFlag             = flag.Int("port", 3306, "MariaDB server port")
-	userFlag             = flag.String("user", "", "MariaDB server user")
-	passwordFlag         = flag.String("password", "", "MariaDB server password")
-	databaseFlag         = flag.String("database", "brim", "Database schema")
-	engineFlag           = flag.String("engine", "InnoDB", "Table engine to use")
-	sizeFlag             = flag.String("size", "", "Total amount of data you wish to insert, this ignores the rows flag, example: 100MB instead of 100000 rows")
-	rowsFlag             = flag.Int("rows", 1000000, "Total number of rows to be inserted. Each row is around 1 Kilobyte")
-	batchSizeFlag        = flag.Int("batch", 1000, "Number of rows to insert per-batch")
-	tablesFlag           = flag.Int("tables", 1, "Number of tables to distribute inserts between")
-	threadsFlag          = flag.Int("threads", 100, "Number of concurrent threads to insert row batches")
+	currentUser string = "root"
+	VERSION     string = ""
+)
+
+func init() {
+	u, err := user.Current()
+	if err == nil {
+		currentUser = u.Username
+	}
+
+}
+
+var (
+	defaultRows    int    = 1000000
+	defaultBatch   int    = 1000
+	defaultTables  int    = 1
+	defaultThreads int    = 100
+	protocol       string = "unix"
+	URI            string
+	dsnOptions     string = "?multiStatements=true&autocommit=true&maxAllowedPacket=0"
+
+	socket   = kingpin.Flag("socket", "Path to MariaDB server socket").Default("/run/mysqld/mysqld.sock").Envar("BRIM_SOCKET").String()
+	host     = kingpin.Flag("host", "MariaDB hostname or IP address").Short('h').Default("localhost").Envar("BRIM_HOST").String()
+	port     = kingpin.Flag("port", "MariaDB TCP/IP Port").Short('P').Envar("BRIM_PORT").Int()
+	username = kingpin.Flag("user", "MariaDB username").Short('u').Default(currentUser).Envar("BRIM_USER").String()
+	password = kingpin.Flag("user", "MariaDB username").Short('p').Default(currentUser).Envar("BRIM_PASSWORD").String()
+	database = kingpin.Flag("database", "Database to use when creating tables").Short('D').Default("brim").Envar("BRIM_DB").String()
+	engine   = kingpin.Flag("engine", "Engine to use when create tables").Short('e').Default("INNODB").Envar("BRIM_ENGINE").String()
+	size     = kingpin.Flag("size", "Size of the dataset to be loaded across all tables e.g. 100MB, 123GB, 2.4TB").Default("").Envar("BRIM_SIZE").String()
+	rows     = kingpin.Flag("rows", "Total number of rows to be inserted across all tables. Each rows is around 1 Kilobyte").Envar("BRIM_ROWS").Int()
+	batch    = kingpin.Flag("batch", "Number of rows to insert per-batch").Envar("BRIM_BATCH").Int()
+	tables   = kingpin.Flag("tables", "Number of tables to distribute inserts between").Envar("BRIM_TABLES").Int()
+	threads  = kingpin.Flag("threads", "Number of concurrent threads to insert row batches").Envar("BRIM_THREADS").Int()
 )
 
 type brim struct {
@@ -178,6 +196,11 @@ func (b *brim) loadTable(table int, rows int) error {
 
 func (b *brim) new() error {
 	var err error
+
+	if b.batch > b.rows {
+		return fmt.Errorf("batch size, %d cannot be larger than the total rows %d", b.batch, b.rows)
+	}
+
 	b.db, err = sql.Open("mysql", b.dsn)
 	if err != nil {
 		return err
@@ -188,14 +211,17 @@ func (b *brim) new() error {
 	}
 
 	jobs := [][]int{}
-	j := 1
-	k := b.tables
-	for i := b.rows - 1; i >= 0; i = i - b.batch {
-		if b.batch > i {
+	var (
+		batch int = b.batch
+		j     int = 1
+		k     int = b.tables
+	)
+	for i := b.rows - 1; i >= 0; i = i - batch {
+		if batch > i {
 			jobs = append(jobs, []int{j, i})
 			break
 		} else {
-			jobs = append(jobs, []int{j, b.batch})
+			jobs = append(jobs, []int{j, batch})
 		}
 		if j >= k {
 			j = 1
@@ -250,66 +276,52 @@ func (b *brim) run() error {
 func main() {
 	flag.Parse()
 
-	if *userFlag == "" {
-		u, err := user.Current()
-		if err != nil {
-			log.Println("Unable to determine username, using root")
-			username = "root"
-		} else {
-			username = u.Username
-		}
-	} else {
-		username = *userFlag
-	}
+	kingpin.Version(VERSION)
 
-	if *hostFlag != "localhost" {
+	if *host != "localhost" {
 		protocol = "tcp"
-		URI = fmt.Sprintf("%s:%d", *hostFlag, *portFlag)
+		URI = fmt.Sprintf("%s:%d", *host, *port)
 	} else {
-		protocol = "unix"
-		URI = *socketFlag
+		URI = *socket
+		*password = ""
 	}
 
-	if *passwordFlag != "" {
-		username = fmt.Sprintf("%s:%s", username, *passwordFlag)
+	if *password != "" {
+		*password = ":" + *password
 	}
 
-	if *threadsFlag <= 0 {
-		log.Fatalln("Specify at least 1 thread ...")
+	if *threads <= 0 {
+		*threads = defaultThreads
 	}
 
-	if *batchSizeFlag > *rowsFlag {
-		log.Fatalln("Batch size cannot be larger than the total rows ...")
+	if *batch <= 0 {
+		*batch = defaultBatch
 	}
 
-	if *batchSizeFlag <= 1 {
-		log.Fatalln("Batch size needs to be greater than 1 ...")
-	}
-
-	if *tablesFlag <= 0 {
-		log.Fatalln("At least 1 table needs to be specified, so the data can go somewhere ...")
+	if *tables <= 0 {
+		*tables = defaultTables
 	}
 
 	b := brim{
-		dsn:           fmt.Sprintf("%s@%s(%s)/%s", username, protocol, URI, dsnOptions),
-		database:      *databaseFlag,
+		dsn:           fmt.Sprintf("%s%s@%s(%s)/%s%s", *username, *password, protocol, URI, *database, dsnOptions),
+		database:      *database,
 		tableBaseName: "brim",
-		threads:       *threadsFlag,
-		batch:         *batchSizeFlag,
-		tables:        *tablesFlag,
-		engine:        *engineFlag,
+		threads:       *threads,
+		batch:         *batch,
+		tables:        *tables,
+		engine:        *engine,
 	}
 
-	if *sizeFlag != "" {
-		rows, err := sizeToRows(*sizeFlag)
+	if *size != "" {
+		r, err := sizeToRows(*size)
 		if err != nil {
 			log.Fatalln(err.Error())
 		}
-		b.rows = rows
-	} else if *rowsFlag <= 0 {
-		log.Fatalln("Specify at least 1 row to be inserted ...")
-		b.rows = *rowsFlag
+		*rows = r
+	} else if *rows <= 0 {
+		*rows = defaultRows
 	}
+	b.rows = *rows
 
 	err := b.new()
 	if err != nil {
