@@ -81,16 +81,16 @@ func randomString(r *rand.Rand) string {
 	return string(s)
 }
 
-func generateRow() string {
+func generateRow() []string {
 	var limit = 2147483647
 	// 1000000000 x genRow ~= 1TB
 	r := rand.New(rand.NewSource(64))
-	b := r.Intn(limit)
+	b := strconv.Itoa(r.Intn(limit))
 	c := randomString(r)
 	d := randomString(r)
 	e := randomString(r)
 	f := randomString(r)
-	return fmt.Sprintf("(%d,'%s','%s','%s','%s')", b, c, d, e, f)
+	return []string{b, c, d, e, f}
 }
 
 func (b *brim) createDatabase() error {
@@ -139,15 +139,13 @@ func (b *brim) insertRow(query string) error {
 	return nil
 }
 
-func generateBatch(rows int) string {
-	batch := make([]string, rows)
+func generateBatch(rows int) [][]string {
+	batch := make([][]string, rows)
 	for i := range batch {
 		r := generateRow()
 		batch[i] = r
 	}
-
-	joinedBatch := strings.Join(batch, ",")
-	return joinedBatch
+	return batch
 }
 
 // Load table will generate a batch of data using generateRow and load the target table.
