@@ -2,10 +2,10 @@ package main
 
 import (
 	"database/sql"
-	"flag"
 	"fmt"
 	"log"
 	"math/rand"
+	"os"
 	"os/user"
 	"regexp"
 	"strconv"
@@ -16,39 +16,7 @@ import (
 )
 
 var (
-	currentUser string = "root"
-	VERSION     string = ""
-)
-
-func init() {
-	u, err := user.Current()
-	if err == nil {
-		currentUser = u.Username
-	}
-
-}
-
-var (
-	defaultRows    int    = 1000000
-	defaultBatch   int    = 1000
-	defaultTables  int    = 1
-	defaultThreads int    = 100
-	protocol       string = "unix"
-	URI            string
-	dsnOptions     string = "?multiStatements=true&autocommit=true&maxAllowedPacket=0"
-
-	socket   = kingpin.Flag("socket", "Path to MariaDB server socket").Default("/run/mysqld/mysqld.sock").Envar("BRIM_SOCKET").String()
-	host     = kingpin.Flag("host", "MariaDB hostname or IP address").Short('h').Default("localhost").Envar("BRIM_HOST").String()
-	port     = kingpin.Flag("port", "MariaDB TCP/IP Port").Short('P').Envar("BRIM_PORT").Int()
-	username = kingpin.Flag("user", "MariaDB username").Short('u').Default(currentUser).Envar("BRIM_USER").String()
-	password = kingpin.Flag("user", "MariaDB username").Short('p').Default(currentUser).Envar("BRIM_PASSWORD").String()
-	database = kingpin.Flag("database", "Database to use when creating tables").Short('D').Default("brim").Envar("BRIM_DB").String()
-	engine   = kingpin.Flag("engine", "Engine to use when create tables").Short('e').Default("INNODB").Envar("BRIM_ENGINE").String()
-	size     = kingpin.Flag("size", "Size of the dataset to be loaded across all tables e.g. 100MB, 123GB, 2.4TB").Default("").Envar("BRIM_SIZE").String()
-	rows     = kingpin.Flag("rows", "Total number of rows to be inserted across all tables. Each rows is around 1 Kilobyte").Envar("BRIM_ROWS").Int()
-	batch    = kingpin.Flag("batch", "Number of rows to insert per-batch").Envar("BRIM_BATCH").Int()
-	tables   = kingpin.Flag("tables", "Number of tables to distribute inserts between").Envar("BRIM_TABLES").Int()
-	threads  = kingpin.Flag("threads", "Number of concurrent threads to insert row batches").Envar("BRIM_THREADS").Int()
+	Version string = ""
 )
 
 type brim struct {
@@ -183,38 +151,94 @@ func generateBatch(rows int) string {
 }
 
 // Load table will generate a batch of data using generateRow and load the target table.
-func (b *brim) loadTable(table int, rows int) error {
+func (b *brim) loadTable(stmt *sql.Stmt, rows int) error {
 	data := generateBatch(rows)
-	tableName := fmt.Sprintf("%s%d", b.tableBaseName, table)
-	row := fmt.Sprintf("INSERT INTO %s.%s (b,c,d,e,f) VALUES %s", b.database, tableName, data)
-	err := b.insertRow(row)
-	if err != nil {
+	if _, err := stmt.Exec(data); err != nil {
 		return err
 	}
 	return nil
 }
 
-func (b *brim) new() error {
+func NewBrim(username, password string, host string, port int, socket, database, engine, size string, rows, batch, tables, threads int) (*brim, error) {
+	var (
+		defaultRows    int    = 1000000
+		defaultBatch   int    = 1000
+		defaultTables  int    = 10
+		defaultThreads int    = 100
+		protocol       string = "unix"
+		dsnOptions     string = "?multiStatements=true&autocommit=true&maxAllowedPacket=0"
+		hostAndPort    string
+	)
+	if username == "" {
+		u, err := user.Current()
+		if err == nil {
+			username = u.Username
+		}
+	}
+
+	if host != "localhost" {
+		protocol = "tcp"
+		hostAndPort = fmt.Sprintf("%s:%d", host, port)
+	} else {
+		hostAndPort = socket
+		password = ""
+	}
+
+	if password != "" {
+		password = ":" + password
+	}
+
+	if threads <= 0 {
+		threads = defaultThreads
+	}
+
+	if batch <= 0 {
+		batch = defaultBatch
+	}
+
+	if tables <= 0 {
+		tables = defaultTables
+	}
+
+	b := brim{
+		dsn:           fmt.Sprintf("%s%s@%s(%s)/%s%s", username, password, protocol, hostAndPort, database, dsnOptions),
+		database:      database,
+		tableBaseName: "brim",
+		threads:       threads,
+		batch:         batch,
+		tables:        tables,
+		engine:        engine,
+	}
+
+	if size != "" {
+		r, err := sizeToRows(size)
+		if err != nil {
+			log.Fatalln(err.Error())
+		}
+		rows = r
+	} else if rows <= 0 {
+		rows = defaultRows
+	}
+	b.rows = rows
 	var err error
 
 	if b.batch > b.rows {
-		return fmt.Errorf("batch size, %d cannot be larger than the total rows %d", b.batch, b.rows)
+		return nil, fmt.Errorf("batch size, %d cannot be larger than the total rows %d", b.batch, b.rows)
 	}
 
 	b.db, err = sql.Open("mysql", b.dsn)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	if err = b.db.Ping(); err != nil {
-		return err
+		return nil, err
 	}
 
 	jobs := [][]int{}
 	var (
-		batch int = b.batch
-		j     int = 1
-		k     int = b.tables
+		j int = 1
+		k int = b.tables
 	)
 	for i := b.rows - 1; i >= 0; i = i - batch {
 		if batch > i {
@@ -232,7 +256,7 @@ func (b *brim) new() error {
 	}
 	b.jobs = jobs
 
-	return nil
+	return &b, nil
 }
 
 func (b *brim) run() error {
@@ -255,7 +279,13 @@ func (b *brim) run() error {
 	for worker := 1; worker <= b.threads; worker++ {
 		go func(id int, jobs <-chan int, results chan<- int) {
 			for i := range jobs {
-				b.loadTable(b.jobs[i][0], b.jobs[i][1])
+				tableName := fmt.Sprintf("%s.%s%d", b.database, b.tableBaseName, id)
+				stmt, err := b.db.Prepare("INSERT INTO " + tableName + " (b,c,d,e,f) VALUES (?, ?, ?, ?, ?)")
+				if err != nil {
+					continue
+				}
+				defer stmt.Close()
+				b.loadTable(stmt, b.jobs[i][1])
 				results <- i
 			}
 		}(worker, jobs, jobResults)
@@ -274,58 +304,29 @@ func (b *brim) run() error {
 }
 
 func main() {
-	flag.Parse()
+	var (
+		host     = kingpin.Flag("host", "MariaDB hostname or IP address").Default("localhost").Envar("BRIM_HOST").String()
+		port     = kingpin.Flag("port", "MariaDB TCP/IP Port").Envar("BRIM_PORT").Int()
+		username = kingpin.Flag("username", "MariaDB username").Default("").Envar("BRIM_USER").String()
+		password = kingpin.Flag("password", "MariaDB username").Default("").Envar("BRIM_PASSWORD").String()
+		socket   = kingpin.Flag("socket", "Path to MariaDB server socket").Default("/run/mysqld/mysqld.sock").Envar("BRIM_SOCKET").String()
+		database = kingpin.Flag("database", "Database to use when creating tables").Default("brim").Envar("BRIM_DB").String()
+		engine   = kingpin.Flag("engine", "Engine to use when create tables").Default("INNODB").Envar("BRIM_ENGINE").String()
+		size     = kingpin.Flag("size", "Size of the dataset to be loaded across all tables e.g. 100MB, 123GB, 2.4TB").Default("").Envar("BRIM_SIZE").String()
+		rows     = kingpin.Flag("rows", "Total number of rows to be inserted across all tables. Each rows is around 1 Kilobyte").Envar("BRIM_ROWS").Int()
+		batch    = kingpin.Flag("batch", "Number of rows to insert per-batch").Envar("BRIM_BATCH").Int()
+		tables   = kingpin.Flag("tables", "Number of tables to distribute inserts between").Envar("BRIM_TABLES").Int()
+		threads  = kingpin.Flag("threads", "Number of concurrent threads to insert row batches").Envar("BRIM_THREADS").Int()
+	)
 
-	kingpin.Version(VERSION)
+	kingpin.Version(Version)
+	kingpin.CommandLine.UsageWriter(os.Stdout)
+	kingpin.HelpFlag.Short('h')
+	kingpin.Parse()
 
-	if *host != "localhost" {
-		protocol = "tcp"
-		URI = fmt.Sprintf("%s:%d", *host, *port)
-	} else {
-		URI = *socket
-		*password = ""
-	}
-
-	if *password != "" {
-		*password = ":" + *password
-	}
-
-	if *threads <= 0 {
-		*threads = defaultThreads
-	}
-
-	if *batch <= 0 {
-		*batch = defaultBatch
-	}
-
-	if *tables <= 0 {
-		*tables = defaultTables
-	}
-
-	b := brim{
-		dsn:           fmt.Sprintf("%s%s@%s(%s)/%s%s", *username, *password, protocol, URI, *database, dsnOptions),
-		database:      *database,
-		tableBaseName: "brim",
-		threads:       *threads,
-		batch:         *batch,
-		tables:        *tables,
-		engine:        *engine,
-	}
-
-	if *size != "" {
-		r, err := sizeToRows(*size)
-		if err != nil {
-			log.Fatalln(err.Error())
-		}
-		*rows = r
-	} else if *rows <= 0 {
-		*rows = defaultRows
-	}
-	b.rows = *rows
-
-	err := b.new()
+	b, err := NewBrim(*username, *password, *host, *port, *socket, *database, *engine, *size, *rows, *batch, *tables, *threads)
 	if err != nil {
-		log.Fatal(err)
+		log.Fatalln(err)
 	}
 	defer b.db.Close()
 
@@ -333,4 +334,5 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
+
 }
