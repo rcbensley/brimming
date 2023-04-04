@@ -1,13 +1,8 @@
 VERSION = $(shell git describe --tags --always --dirty)
 
-DOCKER_REPO= stickyricky/brimming
-DOCKER_IMAGE_NAME = $(DOCKER_REPO):$(VERSION)
-DOCKER_LATEST_IMAGE_NAME = $(DOCKER_REPO):latest
+IMAGE_NAME = brimming:$(VERSION)
 
-all: fmt vet build push
-
-build:
-	go build -o brimming
+all: fmt vet test build image
 
 .PHONY: fmt
 fmt:
@@ -16,6 +11,13 @@ fmt:
 .PHONY: vet
 vet:
 	go vet ./...
+
+.PHONY: test
+test:
+	go test ./...
+
+build:
+	@CGO_ENABLED=0 go build -ldflags "-s -X main.Version=${VERSION}" -o brimming
 
 .PHONY: release
 release: build
@@ -26,13 +28,6 @@ else
 endif
 
 
-.PHONY: build-image
-build-image:
-	docker build . -t $(DOCKER_IMAGE_NAME)
-
-.PHONY: push
-push: build-image
-	docker image tag $(DOCKER_IMAGE_NAME) $(DOCKER_IMAGE_NAME)
-	docker image tag $(DOCKER_IMAGE_NAME) $(DOCKER_LATEST_IMAGE_NAME)
-	docker push $(DOCKER_IMAGE_NAME)
-	docker push $(DOCKER_LATEST_IMAGE_NAME)
+.PHONY: image
+image:
+	podman build . -t $(IMAGE_NAME)
