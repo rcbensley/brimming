@@ -199,7 +199,7 @@ func NewBrim(username, password string, host string, port int, socket, database,
 	}
 
 	b := brim{
-		dsn:           fmt.Sprintf("%s%s@%s(%s)/%s%s", username, password, protocol, hostAndPort, database, dsnOptions),
+		dsn:           fmt.Sprintf("%s%s@%s(%s)/%s", username, password, protocol, hostAndPort, dsnOptions),
 		database:      database,
 		tableBaseName: "brim",
 		threads:       threads,
