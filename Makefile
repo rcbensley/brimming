@@ -1,13 +1,10 @@
 VERSION = $(shell git describe --tags --always --dirty)
+IMAGE_NAME = brimming:$(VERSION)
+BIN_NAME := brimming
+ALL_ARCH := amd64 arm64
+ALL_OS := linux darwin
 
-DOCKER_REPO= stickyricky/brimming
-DOCKER_IMAGE_NAME = $(DOCKER_REPO):$(VERSION)
-DOCKER_LATEST_IMAGE_NAME = $(DOCKER_REPO):latest
-
-all: fmt vet build push
-
-build:
-	go build -o brimming
+all: fmt vet test build image
 
 .PHONY: fmt
 fmt:
@@ -17,22 +14,33 @@ fmt:
 vet:
 	go vet ./...
 
+.PHONY: test
+test:
+	go test ./...
+
+build:
+	@CGO_ENABLED=0 go build -ldflags "-s -X main.Version=${VERSION}" -o brimming
+
+.PHONY: image
+image:
+	podman build . -t $(IMAGE_NAME)
+
+.PHONY: delete-release
+delete-release:
+	@gh release delete $(VERSION) -y
+
 .PHONY: release
-release: build
-ifndef GITHUB_TOKEN
-	@echo GITHUB_TOKEN is not set
-else
-	@goreleaser --rm-dist
-endif
-
-
-.PHONY: build-image
-build-image:
-	docker build . -t $(DOCKER_IMAGE_NAME)
-
-.PHONY: push
-push: build-image
-	docker image tag $(DOCKER_IMAGE_NAME) $(DOCKER_IMAGE_NAME)
-	docker image tag $(DOCKER_IMAGE_NAME) $(DOCKER_LATEST_IMAGE_NAME)
-	docker push $(DOCKER_IMAGE_NAME)
-	docker push $(DOCKER_LATEST_IMAGE_NAME)
+release:
+	@gh release create $(VERSION) --generate-notes
+	@for o in $(ALL_OS); do \
+		for a in $(ALL_ARCH); do \
+			package_file="$(BIN_NAME)-$${o}-$${a}.tar.gz"; \
+			echo "Creating $${package_file}"; \
+			rm -f $${package_file} \
+			&& CGO_ENABLED=0 GOOS=$${o} GOARCH=$${a} go build --ldflags '-extldflags "-static"' -o $(BIN_NAME) brimming.go \
+				&& tar -czf $${package_file} $(BIN_NAME) \
+				&& rm -f $(BIN_NAME) \
+				&& gh release upload $(VERSION) $${package_file} --clobber \
+				&& rm -f $${package_file}; \
+		done \
+	done
