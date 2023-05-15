@@ -38,7 +38,7 @@ type brim struct {
 
 func NewBrim(username, password string, host string, port, connections int, socket, database, engine, size string, rows, batch int64, tables, threads int) (*brim, error) {
 	var (
-		defaultRows    int64  = 10000
+		defaultRows    int64  = 100000
 		defaultBatch   int64  = 1000
 		defaultTables  int    = 10
 		defaultThreads int    = 10
@@ -106,6 +106,9 @@ func NewBrim(username, password string, host string, port, connections int, sock
 		return nil, err
 	}
 
+	if connections < 0 {
+		connections = 0
+	}
 	b.db.SetMaxOpenConns(connections)
 
 	return &b, nil
@@ -203,7 +206,7 @@ PRIMARY KEY (a),
 
 func (b *brim) createTables() error {
 	log.Printf("Creating %d tables\n", b.tables)
-	for i := 0; i <= b.tables; i++ {
+	for i := 1; i <= b.tables; i++ {
 		err := b.createTable(fmt.Sprintf("%s%d", b.tableBaseName, i))
 		if err != nil {
 			return err
@@ -231,67 +234,78 @@ func generateBatch(rows int64) string {
 	return joinedBatch
 }
 
-// Load table will generate a batch of data using generateRow and load the target table.
-func (b *brim) loadTable(tableID int, batchSize int64, rows <-chan int64, result chan<- int64) {
+func (b *brim) loadTable(tableID int64, batchSize int64) {
 	tableName := fmt.Sprintf("%s.%s%d", b.database, b.tableBaseName, tableID)
 	var query string = "INSERT INTO %s (b,c,d,e,f) VALUES %s"
 	data := generateBatch(batchSize)
 	row := fmt.Sprintf(query, tableName, data)
-	r, err := b.db.Exec(row)
+	_, err := b.db.Exec(row)
 	if err != nil {
 		log.Fatal(err)
 	}
-	inserted, err := r.RowsAffected()
-	if err != nil {
-		log.Fatal(err)
-	}
-	result <- inserted
 }
 
 func (b *brim) load() {
-	var batch int64 = b.batch
 
-	rows := make(chan int64, b.rows)
-	result := make(chan int64, b.rows)
+	batches := [][]int64{}
 
-	for t := 1; t <= b.tables; t++ {
-		go b.loadTable(t, batch, rows, result)
+	var table int = 1
+	batch := b.batch
+	for i := int64(0); i < b.rows; i += batch {
+		if table > b.tables {
+			table = 1
+		}
+		if i+batch > b.rows {
+			diff := b.rows - i
+			batch = diff
+		}
+		batches = append(batches, []int64{int64(table), batch})
+		table++
 	}
 
-	for j := int64(0); j <= b.rows; j += batch {
-		rows <- j
-		if j+batch > b.rows {
-			diff := (j + batch) - b.rows
-			batch += diff
-			log.Printf("Remaining rows for last batch: %d", batch)
-		}
-	}
-	close(rows)
+	jobCount := int64(len(batches))
 
-	for r := int64(0); r <= b.rows; r += batch {
-		<-result
-		if r+batch > b.rows {
-			diff := (r + batch) - b.rows
-			batch += diff
-			log.Printf("Remaining rows for last batch: %d", batch)
-		}
+	jobs := make(chan int64, jobCount)
+	results := make(chan int64, jobCount)
+
+	for t := 1; t <= b.threads; t++ {
+		go func(batches [][]int64, jobs <-chan int64, results chan<- int64) {
+
+			for i := range jobs {
+				b.loadTable(batches[i][0], batches[i][1])
+				results <- i
+			}
+		}(batches, jobs, results)
+
+		table++
+	}
+	for j := int64(0); j <= jobCount-1; j++ {
+		jobs <- j
+
+	}
+	close(jobs)
+
+	for r := int64(0); r <= jobCount-1; r++ {
+		<-results
 	}
 
 }
 
-func (b *brim) countRows() {
+func (b *brim) countRows() error {
 	var total int64 = 0
 	for t := 1; t <= b.tables; t++ {
 		var c int64 = 0
 		q := fmt.Sprintf("SELECT COUNT(*) FROM %s.%s%d", b.database, b.tableBaseName, t)
 		if err := b.db.QueryRow(q).Scan(&c); err != nil {
 			log.Fatal(err)
+			return err
 		}
 		fmt.Println(q, c)
 		total += c
 
 	}
 	log.Printf("Total rows: %d", total)
+	return nil
 }
 
 func (b *brim) run() error {
@@ -310,9 +324,12 @@ func (b *brim) run() error {
 	log.Printf("Loading rows: %d, tables: %d, batch: %d, threads: %d\n", b.rows, b.tables, b.batch, b.threads)
 
 	b.load()
-
-	log.Printf("Time: %s", time.Since(b.start))
-
+	endTime := time.Since(b.start)
+	log.Printf("Time to load: %s", endTime)
+	if err := b.countRows(); err != nil {
+		return err
+	}
+	log.Printf("Time to count: %s", time.Since(b.start))
 	return nil
 }
 
@@ -353,7 +370,6 @@ func main() {
 
 	kingpin.Version(Version)
 	kingpin.CommandLine.UsageWriter(os.Stdout)
-	//kingpin.HelpFlag.Short('h')
 	kingpin.Parse()
 
 	b, err := NewBrim(*username, *password, *host, *port, *connections, *socket, *database, *engine, *size, *rows, *batch, *tables, *threads)
@@ -365,7 +381,5 @@ func main() {
 	if err = b.run(); err != nil {
 		log.Fatal(err)
 	}
-
-	b.countRows()
 
 }
