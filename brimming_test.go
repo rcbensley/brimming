@@ -37,3 +37,9 @@ func TestSizeToRows(t *testing.T) {
 	}
 
 }
+
+func TestNewBrim(t *testing.T) {
+}
+
+func TestGenerateJobs(t *testing.T) {
+}

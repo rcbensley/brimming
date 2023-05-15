@@ -253,8 +253,7 @@ func (b *brim) loadTable(tableID int64, batchSize int64) {
 	}
 }
 
-func (b *brim) load() {
-
+func (b *brim) generateJobs() [][]int64 {
 	batches := [][]int64{}
 
 	var table int = 1
@@ -270,7 +269,11 @@ func (b *brim) load() {
 		batches = append(batches, []int64{int64(table), batch})
 		table++
 	}
+	return batches
+}
 
+func (b *brim) load() {
+	batches := b.generateJobs()
 	jobCount := int64(len(batches))
 
 	jobs := make(chan int64, jobCount)
