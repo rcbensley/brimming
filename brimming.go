@@ -34,6 +34,8 @@ type brim struct {
 	tableBaseName string
 	engine        string
 	start         time.Time
+	skipDrop      bool
+	skipCount     bool
 }
 
 func NewBrim(username, password string, host string, port, connections int, socket, database, engine, size string, rows, batch int64, tables, threads int) (*brim, error) {
@@ -188,7 +190,13 @@ func (b *brim) createDatabase() error {
 
 func (b *brim) createTable(name string) error {
 	tableName := b.database + "." + name
-	create := fmt.Sprintf(`DROP TABLE IF EXISTS %s; CREATE TABLE IF NOT EXISTS %s (
+	drop := fmt.Sprintf("DROP TABLE IF EXISTS %s", tableName)
+	if !b.skipDrop {
+		if _, err := b.db.Exec(drop); err != nil {
+			return err
+		}
+	}
+	create := fmt.Sprintf(`CREATE TABLE IF NOT EXISTS %s (
 a bigint(20) NOT NULL AUTO_INCREMENT,
 b int(11) NOT NULL,
 c char(255) NOT NULL,
@@ -196,7 +204,7 @@ d char(255) NOT NULL,
 e char(255) NOT NULL,
 f char(255) NOT NULL,
 PRIMARY KEY (a),
-	INDEX (b)) ENGINE=%s;`, tableName, tableName, b.engine)
+	INDEX (b)) ENGINE=%s;`, tableName, b.engine)
 	err := b.insertRow(create)
 	if err != nil {
 		return err
@@ -326,10 +334,12 @@ func (b *brim) run() error {
 	b.load()
 	endTime := time.Since(b.start)
 	log.Printf("Time to load: %s", endTime)
-	if err := b.countRows(); err != nil {
-		return err
+	if !b.skipCount {
+		if err := b.countRows(); err != nil {
+			return err
+		}
+		log.Printf("Time to count: %s", time.Since(b.start))
 	}
-	log.Printf("Time to count: %s", time.Since(b.start))
 	return nil
 }
 
@@ -366,6 +376,8 @@ func main() {
 		batch       = kingpin.Flag("batch", "Number of rows to insert per-batch").Short('b').Envar("BRIM_BATCH").Int64()
 		tables      = kingpin.Flag("tables", "Number of tables to distribute inserts between").Short('t').Envar("BRIM_TABLES").Int()
 		threads     = kingpin.Flag("threads", "Number of concurrent threads to insert row batches").Envar("BRIM_THREADS").Int()
+		drop        = kingpin.Flag("skip-drop", "Skip dropping and re-creating tables").Bool()
+		count       = kingpin.Flag("skip-count", "Skip counting rows from loaded tables").Bool()
 	)
 
 	kingpin.Version(Version)
@@ -377,6 +389,9 @@ func main() {
 		log.Fatalln(err)
 	}
 	defer b.db.Close()
+
+	b.skipDrop = *drop
+	b.skipCount = *count
 
 	if err = b.run(); err != nil {
 		log.Fatal(err)
