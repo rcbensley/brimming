@@ -8,7 +8,14 @@ Insert 1 billion rows into 100 tables, using 10,000 row batches, and 100 threads
 
 Alternatively specify the size of data you wish to insert, let's load 1TB:
 
-    brimming --size=1tb --threads=10 --tables=250
+    brimming --size=1tb --threads=100 --tables=250
+
+## Install
+If you have go installed:
+
+	go install github.com/rcbensley/brimming@latest
+
+Otherwise checkout the package tarballs.
 
 ## Usage
 Other than the usual options like username, password, port etc, all options are related to loading data.
