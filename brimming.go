@@ -45,9 +45,13 @@ func NewBrim(username, password string, host string, port, connections int, sock
 		defaultTables  int    = 10
 		defaultThreads int    = 10
 		protocol       string = "unix"
-		dsnOptions     string = "?multiStatements=true&autocommit=true&maxAllowedPacket=0"
+		dsnOptions     string = "?multiStatements=true&autocommit=true"
 		hostAndPort    string
 	)
+
+	if port <= 0 {
+		port = 3306
+	}
 
 	if host != "localhost" || socket == "" {
 		protocol = "tcp"
@@ -94,10 +98,6 @@ func NewBrim(username, password string, host string, port, connections int, sock
 	}
 	b.rows = rows
 	var err error
-
-	if b.batch > b.rows {
-		return nil, fmt.Errorf("batch size, %d cannot be larger than the total rows %d", b.batch, b.rows)
-	}
 
 	b.db, err = sql.Open("mysql", b.dsn)
 	if err != nil {
@@ -255,6 +255,11 @@ func (b *brim) loadTable(tableID int64, batchSize int64) {
 
 func (b *brim) generateJobs() [][]int64 {
 	batches := [][]int64{}
+
+	rowsPerTable := b.rows / int64(b.tables)
+	if rowsPerTable <= b.batch {
+		b.batch = rowsPerTable
+	}
 
 	var table int = 1
 	batch := b.batch
