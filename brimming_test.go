@@ -48,7 +48,7 @@ type TestGenerateJobsData struct {
 
 func TestGenerateJobs(t *testing.T) {
 	inputs := []TestGenerateJobsData{
-		{b: brim{rows: 1234, batch: 1000, tables: 10}, jobs: [][]int64{}},
+		{b: brim{rows: 864, batch: 1000, tables: 4}, jobs: [][]int64{[]int64{1, 216}, []int64{1, 216}, []int64{1, 216}, []int64{1, 216}}},
 	}
 
 	for _, b := range inputs {
