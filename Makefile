@@ -4,7 +4,7 @@ BIN_NAME := brimming
 ALL_ARCH := amd64 arm64
 ALL_OS := linux darwin
 
-all: fmt vet test build image
+all: fmt vet test build
 
 .PHONY: fmt
 fmt:
@@ -18,7 +18,12 @@ vet:
 test:
 	go test ./...
 
-build:
+.PHONY: clean
+clean:
+	@go clean
+
+.PHONY: build
+build: clean
 	@CGO_ENABLED=0 go build -ldflags "-s -X main.Version=${VERSION}" -o brimming
 
 .PHONY: image

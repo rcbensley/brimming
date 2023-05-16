@@ -18,7 +18,7 @@ func TestStrToFloat(t *testing.T) {
 }
 
 func TestSizeToRows(t *testing.T) {
-	expect := map[string]int{
+	expect := map[string]int64{
 		"2 thing": 0,
 		"100mb":   100000,
 		"123gb":   123000000,
@@ -36,4 +36,10 @@ func TestSizeToRows(t *testing.T) {
 		}
 	}
 
+}
+
+func TestNewBrim(t *testing.T) {
+}
+
+func TestGenerateJobs(t *testing.T) {
 }
