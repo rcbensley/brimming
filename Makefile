@@ -35,7 +35,7 @@ delete-release:
 	@gh release delete $(VERSION) -y
 
 .PHONY: package
-package:
+package: release
 	@for o in $(ALL_OS); do \
 		for a in $(ALL_ARCH); do \
 			package_file="$(BIN_NAME)-$${o}-$${a}.tar.gz"; \
@@ -50,5 +50,5 @@ package:
 	done
 
 .PHONY: release
-release: package
+release:
 	@gh release create $(VERSION) --generate-notes
