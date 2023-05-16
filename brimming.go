@@ -288,7 +288,6 @@ func (b *brim) load() {
 			}
 		}(batches, jobs, results)
 
-		table++
 	}
 	for j := int64(0); j <= jobCount-1; j++ {
 		jobs <- j
