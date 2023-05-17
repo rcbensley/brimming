@@ -36,6 +36,7 @@ type brim struct {
 	start         time.Time
 	skipDrop      bool
 	skipCount     bool
+	skipLoad      bool
 }
 
 func NewBrim(username, password string, host string, port, connections int, socket, database, engine, size string, rows, batch int64, tables, threads int) (*brim, error) {
@@ -179,7 +180,10 @@ func generateRow() string {
 }
 
 func (b *brim) createDatabase() error {
-	log.Printf("Creating database %s\n", b.database)
+	if b.skipLoad {
+		return nil
+	}
+	log.Printf("Creating database %s if not exists\n", b.database)
 	create := fmt.Sprintf("CREATE DATABASE IF NOT EXISTS %s", b.database)
 	err := b.insertRow(create)
 	if err != nil {
@@ -188,16 +192,28 @@ func (b *brim) createDatabase() error {
 	return nil
 }
 
-func (b *brim) dropTable(name string) error {
-	drop := fmt.Sprintf("DROP TABLE IF EXISTS %s", name)
-	if _, err := b.db.Exec(drop); err != nil {
-		return err
+func (b *brim) dropTables() error {
+	if !b.skipDrop {
+		log.Printf("Dropping tables %s1 to %s%d", b.tableBaseName, b.tableBaseName, b.tables)
+		for i := 1; i <= b.tables; i++ {
+			name := fmt.Sprintf("%s.%s%d", b.database, b.tableBaseName, i)
+			drop := fmt.Sprintf("DROP TABLE IF EXISTS %s", name)
+			if _, err := b.db.Exec(drop); err != nil {
+				return err
+			}
+		}
 	}
 	return nil
 }
 
-func (b *brim) createTable(name string) error {
-	create := fmt.Sprintf(`CREATE TABLE IF NOT EXISTS %s (
+func (b *brim) createTables() error {
+	if b.skipLoad {
+		return nil
+	}
+	log.Printf("Creating tables %s1 to %s%d", b.tableBaseName, b.tableBaseName, b.tables)
+	for i := 1; i <= b.tables; i++ {
+		name := fmt.Sprintf("%s.%s%d", b.database, b.tableBaseName, i)
+		create := fmt.Sprintf(`CREATE TABLE IF NOT EXISTS %s (
 a bigint(20) NOT NULL AUTO_INCREMENT,
 b int(11) NOT NULL,
 c char(255) NOT NULL,
@@ -205,28 +221,7 @@ d char(255) NOT NULL,
 e char(255) NOT NULL,
 f char(255) NOT NULL,
 PRIMARY KEY (a)) ENGINE=%s;`, name, b.engine)
-	err := b.insertRow(create)
-	if err != nil {
-		return err
-	}
-	return nil
-}
-
-func (b *brim) createTables() error {
-	if !b.skipDrop {
-		log.Printf("Dropping tables %s1 to %s%d", b.tableBaseName, b.tableBaseName, b.tables)
-		for i := 1; i <= b.tables; i++ {
-			tableName := fmt.Sprintf("%s.%s%d", b.database, b.tableBaseName, i)
-			if err := b.dropTable(tableName); err != nil {
-				return err
-			}
-		}
-	}
-
-	log.Printf("Creating tables %s1 to %s%d", b.tableBaseName, b.tableBaseName, b.tables)
-	for i := 1; i <= b.tables; i++ {
-		tableName := fmt.Sprintf("%s.%s%d", b.database, b.tableBaseName, i)
-		err := b.createTable(tableName)
+		err := b.insertRow(create)
 		if err != nil {
 			return err
 		}
@@ -296,7 +291,7 @@ func (b *brim) load() {
 	results := make(chan int64, jobCount)
 
 	log.Printf("Loading %d rows into tables %s1 to %s%d...", b.rows, b.tableBaseName, b.tableBaseName, b.tables)
-
+	b.start = time.Now()
 	for t := 1; t <= b.threads; t++ {
 		go func(batches [][]int64, jobs <-chan int64, results chan<- int64) {
 
@@ -316,7 +311,8 @@ func (b *brim) load() {
 	for r := int64(0); r <= jobCount-1; r++ {
 		<-results
 	}
-
+	endTime := time.Since(b.start)
+	log.Printf("Time to load: %s", endTime)
 }
 
 func (b *brim) countRows() error {
@@ -343,9 +339,20 @@ func (b *brim) countRows() error {
 }
 
 func (b *brim) run() error {
+
 	err := b.createDatabase()
 	if err != nil {
 		return err
+	}
+
+	err = b.dropTables()
+	if err != nil {
+		return err
+	}
+
+	if b.skipLoad {
+		log.Println("Skipping create and load")
+		return nil
 	}
 
 	err = b.createTables()
@@ -353,11 +360,7 @@ func (b *brim) run() error {
 		return err
 	}
 
-	b.start = time.Now()
-
 	b.load()
-	endTime := time.Since(b.start)
-	log.Printf("Time to load: %s", endTime)
 
 	if b.skipDrop {
 		log.Printf("tables not dropped, skipping count")
@@ -407,6 +410,7 @@ func main() {
 		threads     = kingpin.Flag("threads", "Number of concurrent threads to insert row batches").Envar("BRIM_THREADS").Int()
 		drop        = kingpin.Flag("skip-drop", "Skip dropping and re-creating tables").Bool()
 		count       = kingpin.Flag("skip-count", "Skip counting rows from loaded tables").Bool()
+		load        = kingpin.Flag("skip-load", "Don't load any data. Useful when cleaning up tables.").Bool()
 	)
 
 	kingpin.Version(Version)
@@ -421,6 +425,7 @@ func main() {
 
 	b.skipDrop = *drop
 	b.skipCount = *count
+	b.skipLoad = *load
 
 	if err = b.run(); err != nil {
 		log.Fatal(err)

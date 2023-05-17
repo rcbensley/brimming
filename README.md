@@ -34,6 +34,7 @@ The default database is called brim. The user will need permissions to create, d
 * connections, limit how many connections are opened to MariaDB.
 * skip-drop, do not drop any pre-existing tables.
 * skip-count, do not run a `count(*)` on each loaded table at the end of a run.
+* skip-load, do not create any tables or insert any rows, useful for cleaning up residual tables.
 
 ## Data
 
