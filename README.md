@@ -14,7 +14,7 @@ Alternatively specify the size of data you wish to insert, let's load 1TB:
 
 If you have go installed:
 
- go install github.com/rcbensley/brimming@latest
+    go install github.com/rcbensley/brimming@latest
 
 Otherwise checkout the package tarballs.
 
