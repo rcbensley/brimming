@@ -38,8 +38,26 @@ func TestSizeToRows(t *testing.T) {
 
 }
 
-func TestNewBrim(t *testing.T) {
+type TestGenerateJobsData struct {
+	b    brim
+	jobs [][]int64
 }
 
 func TestGenerateJobs(t *testing.T) {
+	inputs := []TestGenerateJobsData{
+		{b: brim{rows: 864, batch: 1000, tables: 4}, jobs: [][]int64{{1, 216}, {1, 216}, {1, 216}, {1, 216}}},
+		{b: brim{rows: 100, batch: 1000, tables: 3}, jobs: [][]int64{{1, 34}, {1, 33}, {1, 33}}},
+	}
+
+	for _, b := range inputs {
+		var sum int64 = 0
+		batch := b.b.generateJobs()
+		for _, i := range batch {
+			sum += i[1]
+		}
+		if sum != b.b.rows {
+			t.Fatalf("Expected total row count of %d, got %d", b.b.rows, sum)
+		}
+
+	}
 }
