@@ -188,14 +188,15 @@ func (b *brim) createDatabase() error {
 	return nil
 }
 
-func (b *brim) createTable(name string) error {
-	tableName := b.database + "." + name
-	drop := fmt.Sprintf("DROP TABLE IF EXISTS %s", tableName)
-	if !b.skipDrop {
-		if _, err := b.db.Exec(drop); err != nil {
-			return err
-		}
+func (b *brim) dropTable(name string) error {
+	drop := fmt.Sprintf("DROP TABLE IF EXISTS %s", name)
+	if _, err := b.db.Exec(drop); err != nil {
+		return err
 	}
+	return nil
+}
+
+func (b *brim) createTable(name string) error {
 	create := fmt.Sprintf(`CREATE TABLE IF NOT EXISTS %s (
 a bigint(20) NOT NULL AUTO_INCREMENT,
 b int(11) NOT NULL,
@@ -203,8 +204,7 @@ c char(255) NOT NULL,
 d char(255) NOT NULL,
 e char(255) NOT NULL,
 f char(255) NOT NULL,
-PRIMARY KEY (a),
-	INDEX (b)) ENGINE=%s;`, tableName, b.engine)
+PRIMARY KEY (a)) ENGINE=%s;`, name, b.engine)
 	err := b.insertRow(create)
 	if err != nil {
 		return err
@@ -213,9 +213,20 @@ PRIMARY KEY (a),
 }
 
 func (b *brim) createTables() error {
-	log.Printf("Creating %d tables\n", b.tables)
+	if !b.skipDrop {
+		log.Printf("Dropping tables %s1 to %s%d", b.tableBaseName, b.tableBaseName, b.tables)
+		for i := 1; i <= b.tables; i++ {
+			tableName := fmt.Sprintf("%s.%s%d", b.database, b.tableBaseName, i)
+			if err := b.dropTable(tableName); err != nil {
+				return err
+			}
+		}
+	}
+
+	log.Printf("Creating tables %s1 to %s%d", b.tableBaseName, b.tableBaseName, b.tables)
 	for i := 1; i <= b.tables; i++ {
-		err := b.createTable(fmt.Sprintf("%s%d", b.tableBaseName, i))
+		tableName := fmt.Sprintf("%s.%s%d", b.database, b.tableBaseName, i)
+		err := b.createTable(tableName)
 		if err != nil {
 			return err
 		}
@@ -284,6 +295,8 @@ func (b *brim) load() {
 	jobs := make(chan int64, jobCount)
 	results := make(chan int64, jobCount)
 
+	log.Printf("Loading %d rows into tables %s1 to %s%d...", b.rows, b.tableBaseName, b.tableBaseName, b.tables)
+
 	for t := 1; t <= b.threads; t++ {
 		go func(batches [][]int64, jobs <-chan int64, results chan<- int64) {
 
@@ -308,6 +321,8 @@ func (b *brim) load() {
 
 func (b *brim) countRows() error {
 	var total int64 = 0
+	log.Printf("Counting rows from tables %s1 to %s%d...", b.tableBaseName, b.tableBaseName, b.tables)
+
 	for t := 1; t <= b.tables; t++ {
 		var c int64 = 0
 		q := fmt.Sprintf("SELECT COUNT(*) FROM %s.%s%d", b.database, b.tableBaseName, t)
@@ -315,11 +330,15 @@ func (b *brim) countRows() error {
 			log.Fatal(err)
 			return err
 		}
-		fmt.Println(q, c)
 		total += c
 
 	}
-	log.Printf("Total rows: %d", total)
+	log.Printf("Time to count: %s", time.Since(b.start))
+	if total != b.rows {
+		return fmt.Errorf("tried to load %d rows counted %d in tables %s1 to %s%d", b.rows, total, b.tableBaseName, b.tableBaseName, b.tables)
+	} else {
+		log.Printf("Total rows: %d", total)
+	}
 	return nil
 }
 
@@ -336,16 +355,19 @@ func (b *brim) run() error {
 
 	b.start = time.Now()
 
-	log.Printf("Loading rows: %d, tables: %d, batch: %d, threads: %d\n", b.rows, b.tables, b.batch, b.threads)
-
 	b.load()
 	endTime := time.Since(b.start)
 	log.Printf("Time to load: %s", endTime)
+
+	if b.skipDrop {
+		log.Printf("tables not dropped, skipping count")
+		return nil
+	}
+
 	if !b.skipCount {
 		if err := b.countRows(); err != nil {
 			return err
 		}
-		log.Printf("Time to count: %s", time.Since(b.start))
 	}
 	return nil
 }

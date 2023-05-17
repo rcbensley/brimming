@@ -38,9 +38,6 @@ func TestSizeToRows(t *testing.T) {
 
 }
 
-func TestNewBrim(t *testing.T) {
-}
-
 type TestGenerateJobsData struct {
 	b    brim
 	jobs [][]int64
@@ -48,7 +45,8 @@ type TestGenerateJobsData struct {
 
 func TestGenerateJobs(t *testing.T) {
 	inputs := []TestGenerateJobsData{
-		{b: brim{rows: 864, batch: 1000, tables: 4}, jobs: [][]int64{[]int64{1, 216}, []int64{1, 216}, []int64{1, 216}, []int64{1, 216}}},
+		{b: brim{rows: 864, batch: 1000, tables: 4}, jobs: [][]int64{{1, 216}, {1, 216}, {1, 216}, {1, 216}}},
+		{b: brim{rows: 100, batch: 1000, tables: 3}, jobs: [][]int64{{1, 34}, {1, 33}, {1, 33}}},
 	}
 
 	for _, b := range inputs {
