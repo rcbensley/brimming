@@ -39,32 +39,27 @@ type brim struct {
 	skipLoad      bool
 }
 
-func NewBrim(username, password string, host string, port, connections int, socket, database, engine, size string, rows, batch int64, tables, threads int) (*brim, error) {
+func NewBrim(username, password, host, port string, connections int, socket, database, engine, size string, rows, batch int64, tables, threads int) (*brim, error) {
 	var (
 		defaultRows    int64  = 100000
 		defaultBatch   int64  = 1000
 		defaultTables  int    = 10
 		defaultThreads int    = 10
-		protocol       string = "unix"
 		dsnOptions     string = "?multiStatements=true&autocommit=true"
-		hostAndPort    string
+        dsn string
 	)
 
-	if port <= 0 {
-		port = 3306
-	}
 
-	if host != "localhost" || socket == "" {
-		protocol = "tcp"
-		hostAndPort = fmt.Sprintf("%s:%d", host, port)
-	} else {
-		hostAndPort = socket
-		password = ""
-	}
+    switch {
+    case socket != "" && password != "":
+        dsn = fmt.Sprintf("%s@unix(%s)/%s", username, socket, database)
+    case socket != "" && password == "":
+        dsn = fmt.Sprintf("%s:%s@unix(%s)/%s", username, password, socket, database)
+    default:
+        dsn = fmt.Sprintf("%s:%s@tcp(%s:%s)/%s", username, password, host, port, database)
+    }
 
-	if password != "" {
-		password = ":" + password
-	}
+    dsn = dsn + dsnOptions
 
 	if threads <= 0 {
 		threads = defaultThreads
@@ -79,7 +74,7 @@ func NewBrim(username, password string, host string, port, connections int, sock
 	}
 
 	b := brim{
-		dsn:           fmt.Sprintf("%s%s@%s(%s)/%s", username, password, protocol, hostAndPort, dsnOptions),
+		dsn:           dsn,
 		database:      database,
 		tableBaseName: "brim",
 		threads:       threads,
@@ -396,7 +391,7 @@ func init() {
 func main() {
 	var (
 		host        = kingpin.Flag("host", "MariaDB hostname or IP address").Short('h').Default("localhost").Envar("BRIM_HOST").String()
-		port        = kingpin.Flag("port", "MariaDB TCP/IP Port").Short('P').Envar("BRIM_PORT").Int()
+		port        = kingpin.Flag("port", "MariaDB TCP/IP Port").Short('P').Default("3306").Envar("BRIM_PORT").String()
 		username    = kingpin.Flag("user", "MariaDB username").Short('u').Default(defaultUserName).Envar("BRIM_USER").String()
 		password    = kingpin.Flag("password", "MariaDB password").Short('p').Default("").Envar("BRIM_PASSWORD").String()
 		socket      = kingpin.Flag("socket", "Path to MariaDB server socket").Default(defaultSocketPath).Envar("BRIM_SOCKET").String()

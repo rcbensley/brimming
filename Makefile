@@ -36,7 +36,7 @@ delete-release:
 
 
 .PHONY: create-release
-release:
+create-release:
 	@gh release create $(VERSION) --generate-notes
 
 .PHONY: release
